@@ -32,10 +32,37 @@ async function loadFiles() {
       if (type !== 'blob' || !Object.hasOwn(folders, folder) || !title || rest.length) return [];
       if (!/\.(pdf|jpe?g|png|gif|webp|avif|bmp|svg|ico)$/i.test(title)) return [];
       const kind = /\.pdf$/i.test(title) ? 'PDF' : '圖片';
-      return [{title, category: folders[folder], kind, body: '',
-        summary: '點選開啟' + kind + '（新分頁）',
+      return [{title, path, category: folders[folder], kind, body: '',
+        summary: '上傳時間：暫無資料',
         url: './' + folder + '/' + encodeURIComponent(title)}];
-    }).sort((a, b) => b.title.localeCompare(a.title, 'zh-Hant', {numeric: true}));
+    });
+    // Git tree entries have no dates. Look up the latest commit that touched each file.
+    let nextFile = 0;
+    await Promise.all(Array.from({length: Math.min(4, files.length)}, async () => {
+      while (nextFile < files.length && !controller.signal.aborted) {
+        const file = files[nextFile++];
+        const query = new URLSearchParams({sha: 'main', path: file.path, per_page: '1'});
+        try {
+          const history = await fetch('https://api.github.com/repos/wilsony0917/xizhi-luckystar/commits?' + query, {
+            signal: controller.signal
+          });
+          if (!history.ok) continue;
+          const [latest] = await history.json();
+          file.updatedAt = Date.parse(latest?.commit?.committer?.date) || 0;
+        } catch {
+          // Keep the announcement visible if its date is unavailable.
+        }
+      }
+    }));
+    const dateFormat = new Intl.DateTimeFormat('zh-TW', {
+      timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    });
+    for (const file of files) {
+      if (file.updatedAt) file.summary = '上傳時間：' + dateFormat.format(file.updatedAt);
+    }
+    files.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)
+      || b.title.localeCompare(a.title, 'zh-Hant', {numeric: true}));
     notices.splice(0, notices.length, ...files);
     render();
     status.textContent = files.length ? '' : '目前尚無公告檔案。';
